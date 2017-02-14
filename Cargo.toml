@@ -1,0 +1,6 @@
+[package]
+name = "smtp-void"
+version = "0.1.0"
+authors = ["cakemanny <goldingd89@gmail.com>"]
+
+[dependencies]
