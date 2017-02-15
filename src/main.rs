@@ -140,7 +140,7 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
                 "EHLO" => {
                     let res = ehlo_response(param);
                     try!(out.write(&res));
-                }
+                },
                 "HELO" => {
                     let res = helo_response(param);
                     try!(out.write(&res));
@@ -158,7 +158,7 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
                         current_mail = Mail::WithFrom(from.to_owned());
                         try!(ok_250(out));
                     }
-                }
+                },
                 "RCPT" => {
                     let param_txt = String::from_utf8_lossy(param);
                     if param_txt.len() < " TO:?".len()
@@ -187,37 +187,36 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
                             _   => try!(error_503(out)),
                         }
                     }
-                }
-                "DATA" => {
-                    match current_mail {
-                        Mail::WithTo { from, tos } => {
-                            try!(out.write(RESP_354));
-                            let data = read_data(&mut reader)?;
-                            println!("data: {}", data);
-                            current_mail = Mail::WithData {
-                                from: from,
-                                tos: tos,
-                                data: data
-                            };
-                            // TODO: write data somewhere durable
-                            // such as a mysql database
-                            try!(ok_250(out));
-                        }
-                        _   => try!(error_503(out)),
+                },
+                "DATA" => match current_mail {
+                    Mail::WithTo { from, tos } => {
+                        try!(out.write(RESP_354));
+                        let data = read_data(&mut reader)?;
+                        println!("data: {}", data);
+                        current_mail = Mail::WithData {
+                            from: from,
+                            tos: tos,
+                            data: data
+                        };
+                        // TODO: write data somewhere durable
+                        // such as a mysql database
+                        try!(ok_250(out));
+                        current_mail = Mail::Empty;
                     }
-                }
+                    _   => try!(error_503(out)),
+                },
                 "RSET" => {
                     current_mail = Mail::Empty;
                     try!(ok_250(out));
-                }
+                },
                 "NOOP" => try!(ok_250(out)),
                 "QUIT" => {
                     try!(out.write(RESP_221));
                     break;
-                }
+                },
                 "VRFY" => {
                     try!(out.write(RESP_252));
-                }
+                },
                 _      => try!(error_500(out)),
             }
         }
