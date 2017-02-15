@@ -100,10 +100,6 @@ fn ok_250(mut out: &TcpStream) -> std::io::Result<()> {
     try!(out.write(b"250 Ok\r\n"));
     Ok(())
 }
-fn continue_354(mut out: &TcpStream) -> std::io::Result<()> {
-    try!(out.write(b"354 End data with <CR><LF>.<CR><LF>\r\n"));
-    Ok(())
-}
 
 // The handler for a single client connection from start to finish
 fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
@@ -173,7 +169,6 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
                         println!("To: {}", to);
 
                         match current_mail {
-                            Mail::Empty          => try!(error_503(out)),
                             Mail::WithFrom(from) => {
                                 current_mail = Mail::WithTo {
                                     from: from,
@@ -189,15 +184,27 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
                                 };
                                 try!(ok_250(out));
                             },
-                            Mail::WithData { from:_, tos:_, data:_ } => {
-                                // Should we reset the mail transaction?
-                                try!(error_503(out));
-                            },
+                            _   => try!(error_503(out)),
                         }
                     }
                 }
                 "DATA" => {
-                    try!(out.write(RESP_354));
+                    match current_mail {
+                        Mail::WithTo { from, tos } => {
+                            try!(out.write(RESP_354));
+                            let data = read_data(&mut reader)?;
+                            println!("data: {}", data);
+                            current_mail = Mail::WithData {
+                                from: from,
+                                tos: tos,
+                                data: data
+                            };
+                            // TODO: write data somewhere durable
+                            // such as a mysql database
+                            try!(ok_250(out));
+                        }
+                        _   => try!(error_503(out)),
+                    }
                 }
                 "RSET" => {
                     current_mail = Mail::Empty;
@@ -218,4 +225,24 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Read data until client signals end of data <CR><LF>.<CR><LF>
+fn read_data(reader: &mut BufReader<&TcpStream>) -> std::io::Result<String> {
+    let mut result = String::new();
+    loop {
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read <= 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Data ended before end of message"
+            ));
+        }
+        if line == ".\r\n" || line == ".\n" {
+            break;
+        } else {
+            result += &line;
+        }
+    }
+    Ok(result)
+}
 

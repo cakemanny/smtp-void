@@ -15,4 +15,13 @@ if __name__ == '__main__':
     print(s.recv(512).decode())
     s.send(b'RCPT TO:<dgolding@phlexglobal.com>\r\n')
     print(s.recv(512).decode())
+    s.send(b'DATA\r\n')
+    print(s.recv(512).decode())
+    s.send(b'Dear harry\r\n')
+    s.send(b'how are you?\r\n')
+    s.send(b'.This is not end of mail\r\n')
+    s.send(b'..\r\n')
+    s.send(b'Nor that or this. But this:\r\n')
+    s.send(b'.\r\n')
+    print(s.recv(512).decode())
 
