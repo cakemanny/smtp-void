@@ -1,7 +1,14 @@
 
+#[macro_use]
+extern crate mysql;
+
+mod storage;
+
 use std::net::{TcpListener, TcpStream};
 use std::io::{BufReader, BufRead, Write};
 use std::thread;
+
+use storage::{Mail, Storage, DbStorage };
 
 const MAX_MAIL_SIZE: u32 = 14680064;
 const DOMAIN_NAME: &'static str = "mail.example.com";
@@ -13,13 +20,19 @@ const RESP_354: &'static [u8] =
     b"354 End data with <CR><LF>.<CR><LF>\r\n";
 
 fn main() {
+    // TODO: read out of config
     let listener = TcpListener::bind("127.0.0.1:2525").unwrap();
+
+    // TODO: read out of config
+    let pool = mysql::Pool::new("mysql://root:****@localhost:3306/smtp_void").unwrap();
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                let pool = pool.clone();
                 thread::spawn(move || {
-                    if let Err(e) = handle_connection(stream) {
+                    let store = DbStorage::new(pool);
+                    if let Err(e) = handle_connection(stream, &store) {
                         println!("{}", e)
                     }
                 });
@@ -29,14 +42,6 @@ fn main() {
             }
         }
     }
-}
-
-// Track both our transaction state and our data in our mail type
-enum Mail {
-    Empty,
-    WithFrom(String),
-    WithTo { from: String, tos: Vec<String> },
-    WithData { from: String, tos: Vec<String>, data: String },
 }
 
 /// Removes the trailing new line from bytestring
@@ -102,7 +107,7 @@ fn ok_250(mut out: &TcpStream) -> std::io::Result<()> {
 }
 
 // The handler for a single client connection from start to finish
-fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
+fn handle_connection(stream: TcpStream, store: &Storage) -> std::io::Result<()> {
     println!("Handling stream");
     // Start with a greeting
     try!(ready_220(&stream));
@@ -198,8 +203,18 @@ fn handle_connection(stream: TcpStream) -> std::io::Result<()> {
                             tos: tos,
                             data: data
                         };
-                        // TODO: write data somewhere durable
-                        // such as a mysql database
+
+                        // Store somewhere durable
+                        match store.store_mail(&current_mail) {
+                            Ok(_) => {
+                                println!("Successfully stored mail");
+                            }
+                            _ => {
+                                // TODO: should we send an error reply instead?
+                                println!("Failed to store mail");
+                            }
+                        }
+
                         try!(ok_250(out));
                         current_mail = Mail::Empty;
                     }
@@ -244,4 +259,7 @@ fn read_data(reader: &mut BufReader<&TcpStream>) -> std::io::Result<String> {
     }
     Ok(result)
 }
+
+
+
 
