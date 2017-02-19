@@ -14,12 +14,21 @@ use storage::{Mail, Storage, DbStorage};
 
 const MAX_MAIL_SIZE: u32 = 14680064;
 const DOMAIN_NAME: &'static str = "mail.example.com";
-const RESP_221: &'static [u8] =
+
+const RESP_220_READY: &'static [u8] =
+    b"220 mail.example.com Service ready\r\n";
+const RESP_221_BYE: &'static [u8] =
     b"221 Bye\r\n";
-const RESP_252: &'static [u8] =
+const RESP_250_OK: &'static [u8] =
+    b"250 Ok\r\n";
+const RESP_252_NOVRFY: &'static [u8] =
     b"252 Cannot VRFY user, but will accept message and attempt delivery\r\n";
-const RESP_354: &'static [u8] =
+const RESP_354_CONTINUE: &'static [u8] =
     b"354 End data with <CR><LF>.<CR><LF>\r\n";
+const RESP_500_ERROR: &'static [u8] =
+    b"500 Syntax error, command unrecognised\r\n";
+const RESP_503_BAD_SEQ: &'static [u8] =
+    b"503 Bad sequence of commands\r\n";
 
 
 fn main() {
@@ -108,29 +117,15 @@ fn ehlo_response(param: &[u8]) -> Vec<u8> {
                         DOMAIN_NAME, him, MAX_MAIL_SIZE);
     res.into_bytes()
 }
-// TODO: these could all be written as constants
-fn error_500(mut out: &TcpStream) -> std::io::Result<()> {
-    try!(out.write(b"500 Syntax error, command unrecognised\r\n"));
-    Ok(())
-}
-fn error_503(mut out: &TcpStream) -> std::io::Result<()> {
-    try!(out.write(b"500 Bad sequence of commands\r\n"));
-    Ok(())
-}
-fn ready_220(mut out: &TcpStream) -> std::io::Result<()> {
-    try!(out.write(&format!("220 {} Service ready\r\n", DOMAIN_NAME).into_bytes()));
-    Ok(())
-}
-fn ok_250(mut out: &TcpStream) -> std::io::Result<()> {
-    try!(out.write(b"250 Ok\r\n"));
-    Ok(())
-}
 
 // The handler for a single client connection from start to finish
 fn handle_connection(stream: TcpStream, store: &Storage) -> std::io::Result<()> {
     println!("Handling stream");
     // Start with a greeting
-    try!(ready_220(&stream));
+    {
+        let mut out = &stream;
+        try!(out.write(RESP_220_READY));
+    }
 
     let mut current_mail = Mail::Empty;
 
@@ -174,21 +169,21 @@ fn handle_connection(stream: TcpStream, store: &Storage) -> std::io::Result<()> 
                     let param_txt = String::from_utf8_lossy(param);
                     if param_txt.len() < " FROM:?".len()
                             || !param_txt.starts_with(" FROM:") {
-                        try!(error_500(out));
+                        try!(out.write(RESP_500_ERROR));
                     } else {
                         let from = &param_txt[6..];
                         println!("From: {}", from);
 
                         // Now should we try to process commands
                         current_mail = Mail::WithFrom(from.to_owned());
-                        try!(ok_250(out));
+                        try!(out.write(RESP_250_OK));
                     }
                 },
                 "RCPT" => {
                     let param_txt = String::from_utf8_lossy(param);
                     if param_txt.len() < " TO:?".len()
                             || !param_txt.starts_with(" TO:") {
-                        try!(error_500(out));
+                        try!(out.write(RESP_500_ERROR));
                     } else {
                         let to = &param_txt[4..];
                         println!("To: {}", to);
@@ -199,7 +194,7 @@ fn handle_connection(stream: TcpStream, store: &Storage) -> std::io::Result<()> 
                                     from: from,
                                     tos: vec![to.to_owned()]
                                 };
-                                try!(ok_250(out));
+                                try!(out.write(RESP_250_OK));
                             },
                             Mail::WithTo { from, mut tos } => {
                                 tos.push(to.to_owned());
@@ -207,15 +202,15 @@ fn handle_connection(stream: TcpStream, store: &Storage) -> std::io::Result<()> 
                                     from: from,
                                     tos: tos
                                 };
-                                try!(ok_250(out));
+                                try!(out.write(RESP_250_OK));
                             },
-                            _   => try!(error_503(out)),
+                            _   => { try!(out.write(RESP_503_BAD_SEQ)); },
                         }
                     }
                 },
                 "DATA" => match current_mail {
                     Mail::WithTo { from, tos } => {
-                        try!(out.write(RESP_354));
+                        try!(out.write(RESP_354_CONTINUE));
                         let data = read_data(&mut reader)?;
                         println!("data: {}", data);
                         current_mail = Mail::WithData {
@@ -235,24 +230,22 @@ fn handle_connection(stream: TcpStream, store: &Storage) -> std::io::Result<()> 
                             }
                         }
 
-                        try!(ok_250(out));
+                        try!(out.write(RESP_250_OK));
                         current_mail = Mail::Empty;
                     }
-                    _   => try!(error_503(out)),
+                    _   => { try!(out.write(RESP_503_BAD_SEQ)); },
                 },
                 "RSET" => {
                     current_mail = Mail::Empty;
-                    try!(ok_250(out));
+                    try!(out.write(RESP_250_OK));
                 },
-                "NOOP" => try!(ok_250(out)),
+                "NOOP" => { try!(out.write(RESP_250_OK)); },
                 "QUIT" => {
-                    try!(out.write(RESP_221));
+                    try!(out.write(RESP_221_BYE));
                     break;
                 },
-                "VRFY" => {
-                    try!(out.write(RESP_252));
-                },
-                _      => try!(error_500(out)),
+                "VRFY" => { try!(out.write(RESP_252_NOVRFY)); },
+                _      => { try!(out.write(RESP_500_ERROR)); },
             }
         }
     }
