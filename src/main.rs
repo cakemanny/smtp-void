@@ -1,14 +1,16 @@
 
 #[macro_use]
 extern crate mysql;
+extern crate clap;
 
 mod storage;
 
 use std::net::{TcpListener, TcpStream};
 use std::io::{BufReader, BufRead, Write};
 use std::thread;
+use clap::{Arg, App};
 
-use storage::{Mail, Storage, DbStorage };
+use storage::{Mail, Storage, DbStorage};
 
 const MAX_MAIL_SIZE: u32 = 14680064;
 const DOMAIN_NAME: &'static str = "mail.example.com";
@@ -19,12 +21,30 @@ const RESP_252: &'static [u8] =
 const RESP_354: &'static [u8] =
     b"354 End data with <CR><LF>.<CR><LF>\r\n";
 
-fn main() {
-    // TODO: read out of config
-    let listener = TcpListener::bind("127.0.0.1:2525").unwrap();
 
-    // TODO: read out of config
-    let pool = mysql::Pool::new("mysql://root:****@localhost:3306/smtp_void").unwrap();
+fn main() {
+    let matches = App::new("SMTP Void")
+                        .version("0.1")
+                        .author("Dan Golding")
+                        .about("A dummy smtp server with ability to store messages to database")
+                        .arg(Arg::with_name("bind-address")
+                                .long("bind")
+                                .value_name("BIND_ADDRESS")
+                                .help("Address to listen for smtp connections, default: 0.0.0.0:25")
+                                .takes_value(true))
+                        .arg(Arg::with_name("mysql-url")
+                                .long("mysql")
+                                .value_name("MYSQL_URL")
+                                .help("URL to mysql database in format mysql://{user}:{pass}@{host}:{port}/{database}")
+                                .required(true)
+                                .takes_value(true))
+                        .get_matches();
+
+    let bind_addr = matches.value_of("bind-address").unwrap_or("0.0.0.0:25");
+    let listener = TcpListener::bind(bind_addr).unwrap();
+
+    let mysql_url = matches.value_of("mysql-url").expect("mysql-url is required");
+    let pool = mysql::Pool::new(mysql_url).unwrap();
 
     for stream in listener.incoming() {
         match stream {

@@ -5,4 +5,4 @@ authors = ["cakemanny <goldingd89@gmail.com>"]
 
 [dependencies]
 mysql = "*"
-
+clap = "*"
